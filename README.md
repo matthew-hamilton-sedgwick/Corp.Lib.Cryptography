@@ -19,39 +19,44 @@ The `Aes` and `Argon2` classes require environment variables for key material. T
 | `encryption_string` | Password for AES-128 key derivation | `Aes.Encrypt()`, `Aes.Decrypt()` |
 | `strongencryption_string` | Password for AES-256 key derivation | `Aes.StrongEncrypt()`, `Aes.StrongDecrypt()` |
 | `knownsecret_string` | Known secret combined with user passwords for Argon2 | `Argon2.Hash()`, `Argon2.CompareHashes()` |
-| `{Prefix}.Aes256Gcm.v{N}` | Versioned passwords for AES-GCM file encryption | `AesGcmFile` (with `EnvironmentPasswordSource`) |
+| `{Instance}.{Environment}.{ApplicationName}.Aes256Gcm.v{N}` | Versioned passwords for AES-GCM file encryption | `AesGcmFile` (with `EnvironmentPasswordSource`) |
 
 ### AesGcmFile Environment Variable Pattern
 
-When using `EnvironmentPasswordSource`, passwords are stored in environment variables following this naming convention:
+When using `EnvironmentPasswordSource`, passwords are stored in environment variables following this naming convention derived from your application's configuration:
 
 ```
-{Prefix}.Aes256Gcm.v{KeyVersion}
+{TargetVoyagerInstance}.{TargetedVoyagerEnvironment}.{ApplicationName}.Aes256Gcm.v{KeyVersion}
 ```
+
+The three configuration elements come from `WebApplicationBuilder.Configuration`:
+- `TargetVoyagerInstance` - The target Voyager instance (e.g., "Production", "Staging")
+- `TargetedVoyagerEnvironment` - The target environment (e.g., "Live", "Test")
+- `ApplicationName` - Your application's name
 
 **Examples:**
-| Prefix | Key Version | Environment Variable Name |
-|--------|-------------|---------------------------|
-| `MyApp` | 1 | `MyApp.Aes256Gcm.v1` |
-| `MyApp` | 2 | `MyApp.Aes256Gcm.v2` |
-| `Production` | 3 | `Production.Aes256Gcm.v3` |
-| `Corp.FileStorage` | 1 | `Corp.FileStorage.Aes256Gcm.v1` |
+| Instance | Environment | ApplicationName | Key Version | Environment Variable Name |
+|----------|-------------|-----------------|-------------|---------------------------|
+| `Production` | `Live` | `MyApp` | 1 | `Production.Live.MyApp.Aes256Gcm.v1` |
+| `Production` | `Live` | `MyApp` | 2 | `Production.Live.MyApp.Aes256Gcm.v2` |
+| `Staging` | `Test` | `FileProcessor` | 1 | `Staging.Test.FileProcessor.Aes256Gcm.v1` |
+| `Development` | `Local` | `Corp.Api` | 3 | `Development.Local.Corp.Api.Aes256Gcm.v3` |
 
 **Setting environment variables:**
 
 ```powershell
 # PowerShell (current session)
-$env:MyApp.Aes256Gcm.v1 = "YourSecurePassword2023"
-$env:MyApp.Aes256Gcm.v2 = "YourSecurePassword2024"
+$env:Production.Live.MyApp.Aes256Gcm.v1 = "YourSecurePassword2023"
+$env:Production.Live.MyApp.Aes256Gcm.v2 = "YourSecurePassword2024"
 
 # PowerShell (persistent for user)
-[Environment]::SetEnvironmentVariable("MyApp.Aes256Gcm.v1", "YourSecurePassword2023", "User")
+[Environment]::SetEnvironmentVariable("Production.Live.MyApp.Aes256Gcm.v1", "YourSecurePassword2023", "User")
 
 # Command Prompt
-set MyApp.Aes256Gcm.v1=YourSecurePassword2023
+set Production.Live.MyApp.Aes256Gcm.v1=YourSecurePassword2023
 
 # Linux/macOS
-export MyApp.Aes256Gcm.v1="YourSecurePassword2023"
+export Production.Live.MyApp.Aes256Gcm.v1="YourSecurePassword2023"
 ```
 
 > ⚠️ **Security Note:** For production environments, use a secrets manager (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault) to inject these environment variables at runtime rather than storing them in plain text.
@@ -135,16 +140,38 @@ Provides file encryption using AES-256 in Galois/Counter Mode (GCM). This class 
 
 ### EnvironmentPasswordSource
 
-A type-safe wrapper for environment variable-based password lookup. When you use this, passwords are automatically retrieved from environment variables named `{Prefix}.Aes256Gcm.v{keyVersion}`.
+A type-safe wrapper for environment variable-based password lookup using configuration elements. When you use this, passwords are automatically retrieved from environment variables named `{Instance}.{Environment}.{ApplicationName}.Aes256Gcm.v{keyVersion}`.
 
 ```csharp
-// Create an environment password source with your prefix
-var envSource = new EnvironmentPasswordSource("MyApp");
+// Create from WebApplicationBuilder configuration
+var builder = WebApplication.CreateBuilder(args);
 
+var envSource = new EnvironmentPasswordSource(
+    builder.Configuration["TargetVoyagerInstance"]!,
+    builder.Configuration["TargetedVoyagerEnvironment"]!,
+    builder.Configuration["ApplicationName"]!);
+
+// Example: If configuration contains:
+//   TargetVoyagerInstance = "Production"
+//   TargetedVoyagerEnvironment = "Live"
+//   ApplicationName = "MyApp"
+//
 // This will look up passwords from:
-// - MyApp.Aes256Gcm.v1
-// - MyApp.Aes256Gcm.v2
+// - Production.Live.MyApp.Aes256Gcm.v1
+// - Production.Live.MyApp.Aes256Gcm.v2
 // - etc.
+```
+
+The `EnvironmentPasswordSource` also provides helper methods:
+
+```csharp
+// Get the environment variable name for a specific version
+string envVarName = envSource.GetEnvironmentVariableName(2);
+// Returns: "Production.Live.MyApp.Aes256Gcm.v2"
+
+// Get the password directly
+string? password = envSource.GetPassword(2);
+// Returns the value of the environment variable, or null if not set
 ```
 
 ### Methods
@@ -206,19 +233,22 @@ public static Task EncryptFileAsync(
 |-----------|------|-------------|
 | `sourceFilePath` | `string` | Full path to the file you want to encrypt |
 | `destinationFilePath` | `string` | Full path where the encrypted file will be written |
-| `envSource` | `EnvironmentPasswordSource` | Environment variable prefix for password lookup |
+| `envSource` | `EnvironmentPasswordSource` | Environment variable source containing Instance, Environment, and ApplicationName |
 | `keyVersion` | `int` | Version number identifying which password to use |
 | `cancellationToken` | `CancellationToken` | Optional token to cancel long-running operations |
 
 **What happens internally:**
-1. Reads the password from environment variable `{Prefix}.Aes256Gcm.v{keyVersion}`
+1. Reads the password from environment variable `{Instance}.{Environment}.{ApplicationName}.Aes256Gcm.v{keyVersion}`
 2. Throws `InvalidOperationException` if the environment variable is not set
 3. Proceeds with standard encryption using the retrieved password
 
 **Example:**
 ```csharp
-// Ensure environment variable is set: MyApp.Aes256Gcm.v2 = "SecurePassword2024"
-var envSource = new EnvironmentPasswordSource("MyApp");
+// Ensure environment variable is set: Production.Live.MyApp.Aes256Gcm.v2 = "SecurePassword2024"
+var envSource = new EnvironmentPasswordSource(
+    builder.Configuration["TargetVoyagerInstance"]!,      // "Production"
+    builder.Configuration["TargetedVoyagerEnvironment"]!, // "Live"
+    builder.Configuration["ApplicationName"]!);           // "MyApp"
 
 await AesGcmFile.EncryptFileAsync(
     sourceFilePath: @"C:\Documents\contract.pdf",
@@ -324,22 +354,25 @@ public static Task DecryptFileAsync(
 |-----------|------|-------------|
 | `sourceFilePath` | `string` | Full path to the encrypted file |
 | `destinationFilePath` | `string` | Full path where the decrypted file will be written |
-| `envSource` | `EnvironmentPasswordSource` | Environment variable prefix for password lookup |
+| `envSource` | `EnvironmentPasswordSource` | Environment variable source containing Instance, Environment, and ApplicationName |
 | `cancellationToken` | `CancellationToken` | Optional token to cancel long-running operations |
 
 **What happens internally:**
 1. Reads the key version from the file header
-2. Looks up the password from `{Prefix}.Aes256Gcm.v{keyVersion}`
+2. Looks up the password from `{Instance}.{Environment}.{ApplicationName}.Aes256Gcm.v{keyVersion}`
 3. Throws `CryptographicException` if the environment variable is not set
 4. Decrypts and verifies the file
 
 **Example:**
 ```csharp
 // Ensure environment variables are set for all key versions you need to support:
-// MyApp.Aes256Gcm.v1 = "OldPassword2023"
-// MyApp.Aes256Gcm.v2 = "NewPassword2024"
+// Production.Live.MyApp.Aes256Gcm.v1 = "OldPassword2023"
+// Production.Live.MyApp.Aes256Gcm.v2 = "NewPassword2024"
 
-var envSource = new EnvironmentPasswordSource("MyApp");
+var envSource = new EnvironmentPasswordSource(
+    builder.Configuration["TargetVoyagerInstance"]!,
+    builder.Configuration["TargetedVoyagerEnvironment"]!,
+    builder.Configuration["ApplicationName"]!);
 
 // Automatically uses the correct password based on file's key version
 await AesGcmFile.DecryptFileAsync(
@@ -451,25 +484,28 @@ public static Task<int> ReEncryptFileAsync(
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `encryptedFilePath` | `string` | Full path to the encrypted file to re-encrypt |
-| `envSource` | `EnvironmentPasswordSource` | Environment variable prefix for password lookup |
+| `envSource` | `EnvironmentPasswordSource` | Environment variable source containing Instance, Environment, and ApplicationName |
 | `newKeyVersion` | `int` | The new key version number (must be different from current) |
 | `cancellationToken` | `CancellationToken` | Optional token to cancel long-running operations |
 | **Returns** | `int` | The previous key version that the file was encrypted with |
 
 **What happens internally:**
 1. Reads the current key version from the file header
-2. Retrieves the old password from `{Prefix}.Aes256Gcm.v{oldVersion}`
-3. Retrieves the new password from `{Prefix}.Aes256Gcm.v{newKeyVersion}`
+2. Retrieves the old password from `{Instance}.{Environment}.{ApplicationName}.Aes256Gcm.v{oldVersion}`
+3. Retrieves the new password from `{Instance}.{Environment}.{ApplicationName}.Aes256Gcm.v{newKeyVersion}`
 4. Decrypts with old password, re-encrypts with new password
 
 **Example:**
 ```csharp
 // Ensure environment variables are set:
-// MyApp.Aes256Gcm.v1 = "Password2023"
-// MyApp.Aes256Gcm.v2 = "Password2024"
-// MyApp.Aes256Gcm.v3 = "Password2025"
+// Production.Live.MyApp.Aes256Gcm.v1 = "Password2023"
+// Production.Live.MyApp.Aes256Gcm.v2 = "Password2024"
+// Production.Live.MyApp.Aes256Gcm.v3 = "Password2025"
 
-var envSource = new EnvironmentPasswordSource("MyApp");
+var envSource = new EnvironmentPasswordSource(
+    builder.Configuration["TargetVoyagerInstance"]!,
+    builder.Configuration["TargetedVoyagerEnvironment"]!,
+    builder.Configuration["ApplicationName"]!);
 
 int oldVersion = await AesGcmFile.ReEncryptFileAsync(
     encryptedFilePath: @"C:\Encrypted\contract.pdf.enc",
@@ -483,21 +519,39 @@ Console.WriteLine($"Migrated from key version {oldVersion} to version 3");
 
 #### `CreateEnvironmentPasswordProvider`
 
-Creates a password provider function from an environment variable prefix. Useful when you need a `Func<int, string?>` for other APIs or custom workflows.
+Creates a password provider function from configuration elements or an existing `EnvironmentPasswordSource`. Useful when you need a `Func<int, string?>` for other APIs or custom workflows.
 
 ```csharp
-public static Func<int, string?> CreateEnvironmentPasswordProvider(string envVarPrefix)
+// Overload 1: From individual configuration values
+public static Func<int, string?> CreateEnvironmentPasswordProvider(
+    string instance, 
+    string environment, 
+    string applicationName)
+
+// Overload 2: From an existing EnvironmentPasswordSource
+public static Func<int, string?> CreateEnvironmentPasswordProvider(
+    EnvironmentPasswordSource envSource)
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `envVarPrefix` | `string` | The environment variable prefix |
+| `instance` | `string` | The target Voyager instance |
+| `environment` | `string` | The target Voyager environment |
+| `applicationName` | `string` | The application name |
+| `envSource` | `EnvironmentPasswordSource` | An existing environment password source |
 | **Returns** | `Func<int, string?>` | A function that retrieves passwords for a given key version |
 
 **Example:**
 ```csharp
-// Create a reusable password provider
-var passwordProvider = AesGcmFile.CreateEnvironmentPasswordProvider("MyApp");
+// Create from configuration values
+var passwordProvider = AesGcmFile.CreateEnvironmentPasswordProvider(
+    builder.Configuration["TargetVoyagerInstance"]!,
+    builder.Configuration["TargetedVoyagerEnvironment"]!,
+    builder.Configuration["ApplicationName"]!);
+
+// Or create from an existing EnvironmentPasswordSource
+var envSource = new EnvironmentPasswordSource("Production", "Live", "MyApp");
+var passwordProvider = AesGcmFile.CreateEnvironmentPasswordProvider(envSource);
 
 // Use with the standard DecryptFileAsync overload
 await AesGcmFile.DecryptFileAsync(
@@ -506,7 +560,7 @@ await AesGcmFile.DecryptFileAsync(
     passwordProvider: passwordProvider);
 
 // Or use it for custom logic
-string? passwordV2 = passwordProvider(2); // Returns value of MyApp.Aes256Gcm.v2
+string? passwordV2 = passwordProvider(2); // Returns value of Production.Live.MyApp.Aes256Gcm.v2
 ```
 
 ---
@@ -616,11 +670,17 @@ PCI DSS 4.0 requires periodic rotation of cryptographic keys. Here's a complete 
 
 ```csharp
 // Ensure environment variables are configured:
-// MyApp.Aes256Gcm.v1 = "Password2023"  (retired)
-// MyApp.Aes256Gcm.v2 = "Password2024"  (current)
-// MyApp.Aes256Gcm.v3 = "Password2025"  (new target)
+// Production.Live.MyApp.Aes256Gcm.v1 = "Password2023"  (retired)
+// Production.Live.MyApp.Aes256Gcm.v2 = "Password2024"  (current)
+// Production.Live.MyApp.Aes256Gcm.v3 = "Password2025"  (new target)
 
-var envSource = new EnvironmentPasswordSource("MyApp");
+var builder = WebApplication.CreateBuilder(args);
+
+var envSource = new EnvironmentPasswordSource(
+    builder.Configuration["TargetVoyagerInstance"]!,      // "Production"
+    builder.Configuration["TargetedVoyagerEnvironment"]!, // "Live"
+    builder.Configuration["ApplicationName"]!);           // "MyApp"
+
 int targetVersion = 3;
 
 // Audit and rotate all encrypted files
