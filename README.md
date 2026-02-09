@@ -12,13 +12,49 @@ dotnet add package Corp.Lib.Cryptography
 
 ## Environment Variables
 
-The `Aes` and `Argon2` classes require environment variables for key material. The `AesGcmFile` class does **not** use environment variables—passwords are passed directly to methods for explicit control.
+The `Aes` and `Argon2` classes require environment variables for key material. The `AesGcmFile` class supports **both** direct password parameters and environment variable-based password lookup with versioned keys.
 
 | Variable | Description | Used By |
 |----------|-------------|---------|
 | `encryption_string` | Password for AES-128 key derivation | `Aes.Encrypt()`, `Aes.Decrypt()` |
 | `strongencryption_string` | Password for AES-256 key derivation | `Aes.StrongEncrypt()`, `Aes.StrongDecrypt()` |
 | `knownsecret_string` | Known secret combined with user passwords for Argon2 | `Argon2.Hash()`, `Argon2.CompareHashes()` |
+| `{Prefix}.Aes256Gcm.v{N}` | Versioned passwords for AES-GCM file encryption | `AesGcmFile` (with `EnvironmentPasswordSource`) |
+
+### AesGcmFile Environment Variable Pattern
+
+When using `EnvironmentPasswordSource`, passwords are stored in environment variables following this naming convention:
+
+```
+{Prefix}.Aes256Gcm.v{KeyVersion}
+```
+
+**Examples:**
+| Prefix | Key Version | Environment Variable Name |
+|--------|-------------|---------------------------|
+| `MyApp` | 1 | `MyApp.Aes256Gcm.v1` |
+| `MyApp` | 2 | `MyApp.Aes256Gcm.v2` |
+| `Production` | 3 | `Production.Aes256Gcm.v3` |
+| `Corp.FileStorage` | 1 | `Corp.FileStorage.Aes256Gcm.v1` |
+
+**Setting environment variables:**
+
+```powershell
+# PowerShell (current session)
+$env:MyApp.Aes256Gcm.v1 = "YourSecurePassword2023"
+$env:MyApp.Aes256Gcm.v2 = "YourSecurePassword2024"
+
+# PowerShell (persistent for user)
+[Environment]::SetEnvironmentVariable("MyApp.Aes256Gcm.v1", "YourSecurePassword2023", "User")
+
+# Command Prompt
+set MyApp.Aes256Gcm.v1=YourSecurePassword2023
+
+# Linux/macOS
+export MyApp.Aes256Gcm.v1="YourSecurePassword2023"
+```
+
+> ⚠️ **Security Note:** For production environments, use a secrets manager (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault) to inject these environment variables at runtime rather than storing them in plain text.
 
 ---
 
@@ -93,7 +129,23 @@ Provides file encryption using AES-256 in Galois/Counter Mode (GCM). This class 
 - **AES-256 GCM**: An authenticated encryption mode that provides both confidentiality (encryption) and integrity (tamper detection). If any byte of the encrypted file is modified, decryption will fail.
 - **Key Versioning**: Each encrypted file stores a key version number in its header. This allows you to rotate encryption keys while still being able to decrypt files encrypted with older keys.
 - **Automatic Chunking**: Files larger than 250MB are automatically split into 50MB chunks, each encrypted with a unique nonce. This prevents memory issues with large files.
-- **Password-Based**: Passwords are passed directly to methods (not from environment variables) for explicit control over key material.
+- **Two Password Modes**:
+  - **Direct Password**: Pass passwords explicitly to methods for full control
+  - **Environment Variables**: Use `EnvironmentPasswordSource` to automatically retrieve versioned passwords from environment variables
+
+### EnvironmentPasswordSource
+
+A type-safe wrapper for environment variable-based password lookup. When you use this, passwords are automatically retrieved from environment variables named `{Prefix}.Aes256Gcm.v{keyVersion}`.
+
+```csharp
+// Create an environment password source with your prefix
+var envSource = new EnvironmentPasswordSource("MyApp");
+
+// This will look up passwords from:
+// - MyApp.Aes256Gcm.v1
+// - MyApp.Aes256Gcm.v2
+// - etc.
+```
 
 ### Methods
 
@@ -133,6 +185,46 @@ await AesGcmFile.EncryptFileAsync(
     destinationFilePath: @"C:\Encrypted\contract.pdf.enc",
     password: "MySecurePassword123!",
     keyVersion: 1);
+```
+
+---
+
+#### `EncryptFileAsync` (with environment variables)
+
+Encrypts a file using a password retrieved from an environment variable.
+
+```csharp
+public static Task EncryptFileAsync(
+    string sourceFilePath,
+    string destinationFilePath,
+    EnvironmentPasswordSource envSource,
+    int keyVersion,
+    CancellationToken cancellationToken = default)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `sourceFilePath` | `string` | Full path to the file you want to encrypt |
+| `destinationFilePath` | `string` | Full path where the encrypted file will be written |
+| `envSource` | `EnvironmentPasswordSource` | Environment variable prefix for password lookup |
+| `keyVersion` | `int` | Version number identifying which password to use |
+| `cancellationToken` | `CancellationToken` | Optional token to cancel long-running operations |
+
+**What happens internally:**
+1. Reads the password from environment variable `{Prefix}.Aes256Gcm.v{keyVersion}`
+2. Throws `InvalidOperationException` if the environment variable is not set
+3. Proceeds with standard encryption using the retrieved password
+
+**Example:**
+```csharp
+// Ensure environment variable is set: MyApp.Aes256Gcm.v2 = "SecurePassword2024"
+var envSource = new EnvironmentPasswordSource("MyApp");
+
+await AesGcmFile.EncryptFileAsync(
+    sourceFilePath: @"C:\Documents\contract.pdf",
+    destinationFilePath: @"C:\Encrypted\contract.pdf.enc",
+    envSource: envSource,
+    keyVersion: 2);
 ```
 
 ---
@@ -212,6 +304,48 @@ await AesGcmFile.DecryptFileAsync(
     sourceFilePath: @"C:\Encrypted\contract.pdf.enc",
     destinationFilePath: @"C:\Decrypted\contract.pdf",
     passwordProvider: getPassword);
+```
+
+---
+
+#### `DecryptFileAsync` (with environment variables)
+
+Decrypts a file using passwords from environment variables. The correct password is automatically selected based on the key version stored in the file header.
+
+```csharp
+public static Task DecryptFileAsync(
+    string sourceFilePath,
+    string destinationFilePath,
+    EnvironmentPasswordSource envSource,
+    CancellationToken cancellationToken = default)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `sourceFilePath` | `string` | Full path to the encrypted file |
+| `destinationFilePath` | `string` | Full path where the decrypted file will be written |
+| `envSource` | `EnvironmentPasswordSource` | Environment variable prefix for password lookup |
+| `cancellationToken` | `CancellationToken` | Optional token to cancel long-running operations |
+
+**What happens internally:**
+1. Reads the key version from the file header
+2. Looks up the password from `{Prefix}.Aes256Gcm.v{keyVersion}`
+3. Throws `CryptographicException` if the environment variable is not set
+4. Decrypts and verifies the file
+
+**Example:**
+```csharp
+// Ensure environment variables are set for all key versions you need to support:
+// MyApp.Aes256Gcm.v1 = "OldPassword2023"
+// MyApp.Aes256Gcm.v2 = "NewPassword2024"
+
+var envSource = new EnvironmentPasswordSource("MyApp");
+
+// Automatically uses the correct password based on file's key version
+await AesGcmFile.DecryptFileAsync(
+    sourceFilePath: @"C:\Encrypted\contract.pdf.enc",
+    destinationFilePath: @"C:\Decrypted\contract.pdf",
+    envSource: envSource);
 ```
 
 ---
@@ -302,6 +436,81 @@ Console.WriteLine($"Migrated from key version {oldVersion} to version 3");
 
 ---
 
+#### `ReEncryptFileAsync` (with environment variables)
+
+Re-encrypts a file using passwords from environment variables. Both the old password (for decryption) and new password (for encryption) are retrieved automatically.
+
+```csharp
+public static Task<int> ReEncryptFileAsync(
+    string encryptedFilePath,
+    EnvironmentPasswordSource envSource,
+    int newKeyVersion,
+    CancellationToken cancellationToken = default)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `encryptedFilePath` | `string` | Full path to the encrypted file to re-encrypt |
+| `envSource` | `EnvironmentPasswordSource` | Environment variable prefix for password lookup |
+| `newKeyVersion` | `int` | The new key version number (must be different from current) |
+| `cancellationToken` | `CancellationToken` | Optional token to cancel long-running operations |
+| **Returns** | `int` | The previous key version that the file was encrypted with |
+
+**What happens internally:**
+1. Reads the current key version from the file header
+2. Retrieves the old password from `{Prefix}.Aes256Gcm.v{oldVersion}`
+3. Retrieves the new password from `{Prefix}.Aes256Gcm.v{newKeyVersion}`
+4. Decrypts with old password, re-encrypts with new password
+
+**Example:**
+```csharp
+// Ensure environment variables are set:
+// MyApp.Aes256Gcm.v1 = "Password2023"
+// MyApp.Aes256Gcm.v2 = "Password2024"
+// MyApp.Aes256Gcm.v3 = "Password2025"
+
+var envSource = new EnvironmentPasswordSource("MyApp");
+
+int oldVersion = await AesGcmFile.ReEncryptFileAsync(
+    encryptedFilePath: @"C:\Encrypted\contract.pdf.enc",
+    envSource: envSource,
+    newKeyVersion: 3);
+
+Console.WriteLine($"Migrated from key version {oldVersion} to version 3");
+```
+
+---
+
+#### `CreateEnvironmentPasswordProvider`
+
+Creates a password provider function from an environment variable prefix. Useful when you need a `Func<int, string?>` for other APIs or custom workflows.
+
+```csharp
+public static Func<int, string?> CreateEnvironmentPasswordProvider(string envVarPrefix)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `envVarPrefix` | `string` | The environment variable prefix |
+| **Returns** | `Func<int, string?>` | A function that retrieves passwords for a given key version |
+
+**Example:**
+```csharp
+// Create a reusable password provider
+var passwordProvider = AesGcmFile.CreateEnvironmentPasswordProvider("MyApp");
+
+// Use with the standard DecryptFileAsync overload
+await AesGcmFile.DecryptFileAsync(
+    sourceFilePath: @"C:\Encrypted\contract.pdf.enc",
+    destinationFilePath: @"C:\Decrypted\contract.pdf",
+    passwordProvider: passwordProvider);
+
+// Or use it for custom logic
+string? passwordV2 = passwordProvider(2); // Returns value of MyApp.Aes256Gcm.v2
+```
+
+---
+
 ### Technical Specifications
 
 | Property | Value | Description |
@@ -320,7 +529,7 @@ Console.WriteLine($"Migrated from key version {oldVersion} to version 3");
 |--------|------|-------|-------------|
 | 0 | 1 byte | Format Version | Currently `0x02` |
 | 1 | 4 bytes | Key Version | Little-endian int32 identifying the encryption key |
-| 5 | 4 bytes | Chunk Count | Number of encrypted chunks (1 for files ≤ 250MB) |
+| 5 | 4 bytes | Chunk Count | Number of encrypted chunks (1 for files ? 250MB) |
 | 9 | 8 bytes | Original Size | Original file size in bytes |
 | 17 | 12 bytes | Nonce | Random nonce for this chunk |
 | 29 | 16 bytes | Auth Tag | GCM authentication tag |
@@ -383,16 +592,16 @@ else
 
 ## Rijndael Class (Legacy)
 
-> ⚠️ **Deprecated**: This class uses the obsolete `RijndaelManaged` algorithm and exists only for backward compatibility with existing encrypted data. **Do not use for new development.**
+> ?? **Deprecated**: This class uses the obsolete `RijndaelManaged` algorithm and exists only for backward compatibility with existing encrypted data. **Do not use for new development.**
 
 Use the `Aes` class instead for all new encryption needs.
 
 ```csharp
-// ❌ Legacy - don't use for new code
+// ? Legacy - don't use for new code
 string encrypted = Rijndael.Encrypt("data");
 string decrypted = Rijndael.Decrypt(encrypted);
 
-// ✅ Use this instead
+// ? Use this instead
 string encrypted = Aes.Encrypt("data");
 string decrypted = Aes.Decrypt(encrypted);
 ```
@@ -401,7 +610,43 @@ string decrypted = Aes.Decrypt(encrypted);
 
 ## Key Rotation Workflow (PCI DSS 4.0)
 
-PCI DSS 4.0 requires periodic rotation of cryptographic keys. Here's a complete workflow:
+PCI DSS 4.0 requires periodic rotation of cryptographic keys. Here's a complete workflow using environment variables:
+
+### Using Environment Variables (Recommended)
+
+```csharp
+// Ensure environment variables are configured:
+// MyApp.Aes256Gcm.v1 = "Password2023"  (retired)
+// MyApp.Aes256Gcm.v2 = "Password2024"  (current)
+// MyApp.Aes256Gcm.v3 = "Password2025"  (new target)
+
+var envSource = new EnvironmentPasswordSource("MyApp");
+int targetVersion = 3;
+
+// Audit and rotate all encrypted files
+var encryptedFiles = Directory.GetFiles(@"C:\EncryptedData", "*.enc", SearchOption.AllDirectories);
+
+foreach (var file in encryptedFiles)
+{
+    int currentVersion = await AesGcmFile.GetFileKeyVersionAsync(file);
+    
+    if (currentVersion < targetVersion)
+    {
+        Console.WriteLine($"Rotating: {file} (v{currentVersion} -> v{targetVersion})");
+        
+        int oldVersion = await AesGcmFile.ReEncryptFileAsync(
+            file,
+            envSource,
+            targetVersion);
+            
+        Console.WriteLine($"  Completed: migrated from v{oldVersion}");
+    }
+}
+
+Console.WriteLine("Key rotation complete");
+```
+
+### Using Direct Passwords
 
 ```csharp
 // Step 1: Define all historical and current passwords
