@@ -12,7 +12,7 @@ dotnet add package Corp.Lib.Cryptography
 
 ## Environment Variables
 
-The `Aes` and `Argon2` classes require environment variables for key material. The `AesGcmFile.Implementation` class supports **both** direct password parameters and environment variable-based password lookup with versioned keys.
+The `Aes` and `Argon2` classes require environment variables for key material. The `AesGcmFile.Implementation` class supports **both** direct password parameters and configuration-based password lookup with versioned keys.
 
 | Variable | Description | Used By |
 |----------|-------------|---------|
@@ -60,7 +60,7 @@ set Production.Live.MyApp.Aes256Gcm.v1=YourSecurePassword2023
 export Production.Live.MyApp.Aes256Gcm.v1="YourSecurePassword2023"
 ```
 
-> ?? **Security Note:** For production environments, use a secrets manager (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault) to inject these environment variables at runtime rather than storing them in plain text.
+> ?? **Security Note:** For production environments, use a secrets manager (Azure Key Vault, AWS Secrets Manager, HashiCorp Vault) to inject these configurations at runtime rather than storing them in plain text.
 
 ---
 
