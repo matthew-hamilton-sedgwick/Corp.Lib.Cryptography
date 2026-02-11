@@ -2,7 +2,7 @@
 
 A .NET 10 cryptographic library providing secure AES encryption, AES-GCM file encryption with PCI DSS 4.0 key versioning, and Argon2id password hashing.
 
-[![NuGet](https://img.shields.io/nuget/v/Corp.Lib.Cryptography.svg)](https://www.nuget.org/packages/Corp.Lib.Cryptography/)
+[![NuGet](https://img.shields.io/nuget/v/Corp.Lib.Cryptography.svg)](https://pkgs.dev.azure.com/IT-Specialty/_packaging/Voyager3a-NuGet/nuget/v3/artifacts/Corp.Lib.Cryptography)
 
 ## Installation
 
@@ -19,11 +19,11 @@ The `Aes` and `Argon2` classes require environment variables for key material. T
 | `encryption_string` | Password for AES-128 key derivation | `Aes.Encrypt()`, `Aes.Decrypt()` |
 | `strongencryption_string` | Password for AES-256 key derivation | `Aes.StrongEncrypt()`, `Aes.StrongDecrypt()` |
 | `knownsecret_string` | Known secret combined with user passwords for Argon2 | `Argon2.Hash()`, `Argon2.CompareHashes()` |
-| `{Instance}.{Environment}.{ApplicationName}.Aes256Gcm.v{N}` | Versioned passwords for AES-GCM file encryption | `Implementation` (with `EnvironmentPasswordSource`) |
+| `{Instance}.{Environment}.{ApplicationName}.Aes256Gcm.v{N}` | Versioned passwords for AES-GCM file encryption | `Implementation` (with `EvPasswordSource`) |
 
 ### AesGcmFile Environment Variable Pattern
 
-When using `EnvironmentPasswordSource`, passwords are stored in environment variables following this naming convention derived from your application's configuration:
+When using `EvPasswordSource`, passwords are stored in environment variables following this naming convention derived from your application's configuration:
 
 ```
 {TargetVoyagerInstance}.{TargetedVoyagerEnvironment}.{ApplicationName}.Aes256Gcm.v{KeyVersion}
@@ -36,6 +36,7 @@ The four configuration elements come from `WebApplicationBuilder.Configuration`:
 - `Aes256GcmKeyVersion` - The current key version for encryption (e.g., "1", "2")
 
 **Examples:**
+
 | Instance | Environment | ApplicationName | Key Version | Environment Variable Name |
 |----------|-------------|-----------------|-------------|---------------------------|
 | `Production` | `Live` | `MyApp` | 1 | `Production.Live.MyApp.Aes256Gcm.v1` |
@@ -137,9 +138,9 @@ Provides file encryption using AES-256 in Galois/Counter Mode (GCM). This class 
 - **Automatic Chunking**: Files larger than 250MB are automatically split into 50MB chunks, each encrypted with a unique nonce. This prevents memory issues with large files.
 - **Two Password Modes**:
   - **Direct Password**: Pass passwords explicitly to methods for full control
-  - **Environment Variables**: Use `EnvironmentPasswordSource` to automatically retrieve versioned passwords from environment variables
+  - **Environment Variables**: Use `EvPasswordSource` to automatically retrieve versioned passwords from environment variables
 
-### EnvironmentPasswordSource
+### EvPasswordSource
 
 A type-safe wrapper for environment variable-based password lookup using configuration elements. When you use this, passwords are automatically retrieved from environment variables named `{Instance}.{Environment}.{ApplicationName}.Aes256Gcm.v{keyVersion}`.
 
@@ -147,7 +148,7 @@ A type-safe wrapper for environment variable-based password lookup using configu
 ```csharp
 // In Program.cs - register the service
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddAesGcmFileService();
+builder.AddAesGcmFileService();
 
 // In your service - inject and use
 public class FileEncryptionService(IFileService fileService)
@@ -173,14 +174,14 @@ public class FileEncryptionService(IFileService fileService)
 
 **Manual construction (for non-DI scenarios):**
 ```csharp
-var envSource = new EnvironmentPasswordSource(
+var envSource = new EvPasswordSource(
     Instance: "Production",
     Environment: "Live", 
     ApplicationName: "MyApp",
     KeyVersion: 1);
 ```
 
-The `EnvironmentPasswordSource` also provides helper methods:
+The `EvPasswordSource` also provides helper methods:
 
 ```csharp
 // Access the configured key version
@@ -262,12 +263,12 @@ public class MyService(IFileService fileService)
 }
 ```
 
-**Using the static method with EnvironmentPasswordSource:**
+**Using the static method with EvPasswordSource:**
 ```csharp
 public static Task EncryptFileAsync(
     string sourceFilePath,
     string destinationFilePath,
-    EnvironmentPasswordSource envSource,
+    EvPasswordSource envSource,
     int keyVersion,
     CancellationToken cancellationToken = default)
 ```
@@ -276,7 +277,7 @@ public static Task EncryptFileAsync(
 |-----------|------|-------------|
 | `sourceFilePath` | `string` | Full path to the file you want to encrypt |
 | `destinationFilePath` | `string` | Full path where the encrypted file will be written |
-| `envSource` | `EnvironmentPasswordSource` | Environment variable source for password lookup |
+| `envSource` | `EvPasswordSource` | Environment variable source for password lookup |
 | `keyVersion` | `int` | Version number identifying which password to use |
 | `cancellationToken` | `CancellationToken` | Optional token to cancel long-running operations |
 
@@ -385,12 +386,12 @@ public class MyService(IFileService fileService)
 }
 ```
 
-**Using the static method with EnvironmentPasswordSource:**
+**Using the static method with EvPasswordSource:**
 ```csharp
 public static Task DecryptFileAsync(
     string sourceFilePath,
     string destinationFilePath,
-    EnvironmentPasswordSource envSource,
+    EvPasswordSource envSource,
     CancellationToken cancellationToken = default)
 ```
 
@@ -398,7 +399,7 @@ public static Task DecryptFileAsync(
 |-----------|------|-------------|
 | `sourceFilePath` | `string` | Full path to the encrypted file |
 | `destinationFilePath` | `string` | Full path where the decrypted file will be written |
-| `envSource` | `EnvironmentPasswordSource` | Environment variable source for password lookup |
+| `envSource` | `EvPasswordSource` | Environment variable source for password lookup |
 | `cancellationToken` | `CancellationToken` | Optional token to cancel long-running operations |
 
 **What happens internally:**
@@ -515,11 +516,11 @@ public class KeyRotationService(IFileService fileService)
 }
 ```
 
-**Using the static method with EnvironmentPasswordSource:**
+**Using the static method with EvPasswordSource:**
 ```csharp
 public static Task<int> ReEncryptFileAsync(
     string encryptedFilePath,
-    EnvironmentPasswordSource envSource,
+    EvPasswordSource envSource,
     int newKeyVersion,
     CancellationToken cancellationToken = default)
 ```
@@ -527,7 +528,7 @@ public static Task<int> ReEncryptFileAsync(
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `encryptedFilePath` | `string` | Full path to the encrypted file to re-encrypt |
-| `envSource` | `EnvironmentPasswordSource` | Environment variable source for password lookup |
+| `envSource` | `EvPasswordSource` | Environment variable source for password lookup |
 | `newKeyVersion` | `int` | The new key version number (must be different from current) |
 | `cancellationToken` | `CancellationToken` | Optional token to cancel long-running operations |
 | **Returns** | `int` | The previous key version that the file was encrypted with |
@@ -546,36 +547,34 @@ public static Task<int> ReEncryptFileAsync(
 Creates a password provider function for use with other APIs or custom workflows. Multiple overloads are available.
 
 ```csharp
-// Recommended: From IConfiguration (automatic)
+// From an existing EvPasswordSource
 public static Func<int, string?> CreateEnvironmentPasswordProvider(
-    IConfiguration configuration)
-
-// From an existing EnvironmentPasswordSource
-public static Func<int, string?> CreateEnvironmentPasswordProvider(
-    EnvironmentPasswordSource envSource)
+    EvPasswordSource envSource)
 
 // From individual configuration values (manual)
 public static Func<int, string?> CreateEnvironmentPasswordProvider(
     string instance, 
     string environment, 
-    string applicationName)
+    string applicationName,
+    int keyVersion = 1)
 ```
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `configuration` | `IConfiguration` | Configuration instance (automatically retrieves all values) |
-| `envSource` | `EnvironmentPasswordSource` | An existing environment password source |
+| `envSource` | `EvPasswordSource` | An existing environment password source |
 | `instance` | `string` | The target Voyager instance |
 | `environment` | `string` | The target Voyager environment |
 | `applicationName` | `string` | The application name |
+| `keyVersion` | `int` | The key version (defaults to 1) |
 | **Returns** | `Func<int, string?>` | A function that retrieves passwords for a given key version |
 
-**Example (Recommended):**
+**Example:**
 ```csharp
-var builder = WebApplication.CreateBuilder(args);
-
-// Create from IConfiguration - simplest approach
-var passwordProvider = Implementation.CreateEnvironmentPasswordProvider(builder.Configuration);
+// Create from individual values
+var passwordProvider = Implementation.CreateEnvironmentPasswordProvider(
+    instance: "Production",
+    environment: "Live",
+    applicationName: "MyApp");
 
 // Use with the standard DecryptFileAsync overload
 await Implementation.DecryptFileAsync(
@@ -695,7 +694,7 @@ PCI DSS 4.0 requires periodic rotation of cryptographic keys. Here's a complete 
 ```csharp
 // In Program.cs
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddAesGcmFileService();
+builder.AddAesGcmFileService();
 
 // Create a key rotation service
 public class KeyRotationService(IFileService fileService, ILogger<KeyRotationService> logger)
